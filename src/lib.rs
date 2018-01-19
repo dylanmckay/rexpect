@@ -78,6 +78,10 @@
 //!
 //! ```
 
+// Sad that this is needed :(
+// https://github.com/rust-lang/rust/issues/33906
+#![feature(decode_utf8)]
+
 extern crate nix;
 extern crate regex;
 extern crate tempfile;

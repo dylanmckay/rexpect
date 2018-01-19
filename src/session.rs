@@ -124,6 +124,12 @@ impl PtySession {
         self.reader.try_read()
     }
 
+    /// Return `Some(b)` if a byte is ready in the stdout stream of the process, return `None`
+    /// otherwise. This is nonblocking.
+    pub fn try_read_raw(&mut self) -> Option<u8> {
+        self.reader.try_read_raw()
+    }
+
     /// Wait until we see EOF (i.e. child process has terminated)
     /// Return all the yet unread output
     pub fn exp_eof(&mut self) -> Result<String> {

@@ -3,7 +3,7 @@
 use std::io::{self, BufReader};
 use std::io::prelude::*;
 use std::sync::mpsc::{channel, Receiver};
-use std::{thread, result};
+use std::{self, thread, result};
 use std::{time, fmt};
 use errors::*; // load error-chain
 pub use regex::Regex;
@@ -100,7 +100,7 @@ pub fn find(needle: &ReadUntil, buffer: &str, eof: bool) -> Option<(usize, usize
 /// calling `read_line` or `read_until` it reads from an internal buffer
 pub struct NBReader {
     reader: Receiver<result::Result<PipedChar, PipeError>>,
-    buffer: String,
+    buffer: Vec<u8>,
     eof: bool,
     timeout: Option<time::Duration>,
 }
@@ -147,7 +147,7 @@ impl NBReader {
         // we don't need to reallocate memory often
         NBReader {
             reader: rx,
-            buffer: String::with_capacity(1024),
+            buffer: Vec::with_capacity(1024),
             eof: false,
             timeout: timeout.and_then(|millis| Some(time::Duration::from_millis(millis))),
         }
@@ -160,7 +160,7 @@ impl NBReader {
         }
         while let Ok(from_channel) = self.reader.try_recv() {
             match from_channel {
-                Ok(PipedChar::Char(c)) => self.buffer.push(c as char),
+                Ok(PipedChar::Char(c)) => self.buffer.push(c),
                 Ok(PipedChar::EOF) => self.eof = true,
                 // this is just from experience, e.g. "sleep 5" returns the other error which
                 // most probably means that there is no stdout stream at all -> send EOF
@@ -226,9 +226,14 @@ impl NBReader {
 
         loop {
             self.read_into_buffer()?;
-            if let Some(tuple_pos) = find(needle, &self.buffer, self.eof) {
-                let first = self.buffer.drain(..tuple_pos.0).collect();
-                let second = self.buffer.drain(..tuple_pos.1 - tuple_pos.0).collect();
+            let text = String::from_utf8_lossy(&self.buffer).to_string();
+
+            if let Some(tuple_pos) = find(needle, &text, self.eof) {
+                let first = text[..tuple_pos.0].to_owned();
+                let second = text[tuple_pos.0..tuple_pos.1].to_owned();
+
+                self.buffer = text[tuple_pos.1..].bytes().collect();
+
                 return Ok((first, second));
             }
 
@@ -236,14 +241,15 @@ impl NBReader {
             // we don't know the reason of eof yet, so we provide an empty string
             // this will be filled out in session::exp()
             if self.eof {
-                return Err(ErrorKind::EOF(needle.to_string(), self.buffer.clone(), None).into());
+                return Err(ErrorKind::EOF(needle.to_string(),
+                    String::from_utf8_lossy(&self.buffer).to_string(), None).into());
             }
 
             // ran into timeout
             if let Some(timeout) = self.timeout {
                 if start.elapsed() > timeout {
                     return Err(ErrorKind::Timeout(needle.to_string(),
-                                                  self.buffer.clone(),
+                                                  String::from_utf8_lossy(&self.buffer).to_string(),
                                                   timeout)
                                        .into());
                 }
@@ -256,6 +262,19 @@ impl NBReader {
     /// Try to read one char from internal buffer. Returns None if
     /// no char is ready, Some(char) otherwise. This is nonblocking
     pub fn try_read(&mut self) -> Option<char> {
+        // discard eventual errors, EOF will be handled in read_until correctly
+        let _ = self.read_into_buffer();
+        if let Some(Ok(c)) = std::char::decode_utf8(self.buffer.iter().cloned()).next() {
+            self.buffer.drain(..c.len_utf8()).last();
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    /// Try to read one char from internal buffer. Returns None if
+    /// no char is ready, Some(char) otherwise. This is nonblocking
+    pub fn try_read_raw(&mut self) -> Option<u8> {
         // discard eventual errors, EOF will be handled in read_until correctly
         let _ = self.read_into_buffer();
         if self.buffer.len() > 0 {
