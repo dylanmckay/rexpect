@@ -3,7 +3,7 @@
 use std::io::{self, BufReader};
 use std::io::prelude::*;
 use std::sync::mpsc::{channel, Receiver};
-use std::{self, thread, result};
+use std::{thread, result};
 use std::{time, fmt};
 use errors::*; // load error-chain
 pub use regex::Regex;
@@ -264,7 +264,10 @@ impl NBReader {
     pub fn try_read(&mut self) -> Option<char> {
         // discard eventual errors, EOF will be handled in read_until correctly
         let _ = self.read_into_buffer();
-        if let Some(Ok(c)) = std::char::decode_utf8(self.buffer.iter().cloned()).next() {
+
+        // INEFFICIENT: decoding the whole string every time.
+        let s = String::from_utf8(self.buffer.to_owned()).unwrap_or_else(|_| String::new());
+        if let Some(c) = s.chars().next() {
             self.buffer.drain(..c.len_utf8()).last();
             Some(c)
         } else {
